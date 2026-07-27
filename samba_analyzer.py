@@ -1,6 +1,6 @@
 """
 ╔═══════════════════════════════════════════════════════════╗
-║               SAMBA AUDIT LOG ANALYZER  v1.1              ║
+║               SAMBA AUDIT LOG ANALYZER  v1.2              ║
 ║     GUI-приложение для анализа и визуализации логов       ║
 ║                                                           ║
 ║                                                           ║
@@ -45,7 +45,7 @@ def strip_emoji(text):
 
 _APP_META = {
     "bld": "4e69636f6c61796b61",
-    "ver": "1.1",
+    "ver": "1.2",
     "chk": lambda s: bytes.fromhex(s).decode('utf-8') if s else None
 }
 
@@ -56,7 +56,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Glyph.*missing.*")
 
 APP_NAME = "Samba Audit Log Analyzer"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 
 def _get_author():
     try:
