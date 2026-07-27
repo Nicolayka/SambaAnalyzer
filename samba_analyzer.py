@@ -1,6 +1,6 @@
 """
 ╔═══════════════════════════════════════════════════════════╗
-║               SAMBA AUDIT LOG ANALYZER  v1.0              ║
+║               SAMBA AUDIT LOG ANALYZER  v1.1              ║
 ║     GUI-приложение для анализа и визуализации логов       ║
 ║                                                           ║
 ║                                                           ║
@@ -27,16 +27,27 @@ import seaborn as sns
 import customtkinter as ctk
 import warnings
 
+import re
+
+def strip_emoji(text):
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub('', text).strip()
 
 _APP_META = {
     "bld": "4e69636f6c61796b61",
-    "ver": "1.0",
+    "ver": "1.1",
     "chk": lambda s: bytes.fromhex(s).decode('utf-8') if s else None
 }
-
-APP_NAME = f"Samba Audit Log Analyzer"
-APP_VERSION = "1.0"
-
 
 plt.rcParams['font.sans-serif'] = ['Segoe UI Emoji', 'Segoe UI Symbol', 'DejaVu Sans', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
@@ -44,12 +55,14 @@ plt.rcParams['axes.unicode_minus'] = False
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Glyph.*missing.*")
 
+APP_NAME = "Samba Audit Log Analyzer"
+APP_VERSION = "1.1"
+
 def _get_author():
     try:
         return _APP_META["chk"](_APP_META["bld"])
     except:
         return "Unknown"
-
 
 class SambaParser:
 
@@ -100,7 +113,7 @@ class SambaParser:
                 if match:
                     d = match.groupdict()
                     parts = d['payload'].split('|')
-                    
+
                     if len(parts) == 7:
                         user, ip, folder, action, status, access_flag, filepath = parts
                     elif len(parts) == 6:
@@ -130,7 +143,7 @@ class SambaParser:
                     d['action_ru'] = action_ru
                     d['status_ru'] = "✅ Успешно" if status.strip().lower() in ("ok", "success") else "❌ Ошибка"
                     d['filepath'] = filepath.strip()
-                    
+
                     rows.append(d)
                     parsed_lines += 1
 
@@ -153,10 +166,10 @@ class SambaParser:
     def _parse_timestamps(cls, timestamp_series):
         from datetime import datetime
         import pandas as pd
-        
+
         result = pd.Series(pd.NaT, index=timestamp_series.index)
         current_year = datetime.now().year
-        
+
         for fmt in cls.DATE_FORMATS:
             mask = result.isna()
             if not mask.any():
@@ -165,7 +178,7 @@ class SambaParser:
                 result[mask] = pd.to_datetime(timestamp_series[mask], format=fmt, errors="coerce")
             except Exception:
                 pass
-        
+
         mask = result.isna()
         if mask.any():
             parsed_syslog = []
@@ -176,16 +189,16 @@ class SambaParser:
                 except Exception:
                     parsed_syslog.append(pd.NaT)
             result[mask] = parsed_syslog
-        
+
         mask = result.isna()
         if mask.any():
             try:
                 result[mask] = pd.to_datetime(timestamp_series[mask], errors="coerce")
             except Exception:
                 pass
-        
+
         return result
-        
+
     @staticmethod
     def get_stats(df):
         if df.empty:
@@ -205,11 +218,24 @@ class SambaParser:
             "top_action": df["action_ru"].value_counts().idxmax() if len(df) else "N/A",
         }
 
-
 class ChartBuilder:
 
     @staticmethod
     def build_all(df, parent_frame, dpi=100):
+        import re
+
+        def strip_emoji(text):
+            emoji_pattern = re.compile(
+                "["
+                "\U0001F600-\U0001F64F"
+                "\U0001F300-\U0001F5FF"
+                "\U0001F680-\U0001F6FF"
+                "\U0001F1E0-\U0001F1FF"
+                "\U00002702-\U000027B0"
+                "\U000024C2-\U0001F251"
+                "]+", flags=re.UNICODE
+            )
+            return emoji_pattern.sub('', text).strip()
 
         for widget in parent_frame.winfo_children():
             widget.destroy()
@@ -223,10 +249,11 @@ class ChartBuilder:
 
         ax1 = fig.add_subplot(2, 2, 1)
         action_counts = df["action_ru"].value_counts().head(10)
+        clean_action_labels = [strip_emoji(str(label)) for label in action_counts.index]
         sns.barplot(
             x=action_counts.values,
-            y=action_counts.index,
-            hue=action_counts.index,
+            y=clean_action_labels,
+            hue=clean_action_labels,
             palette=colors_actions,
             legend=False,
             ax=ax1,
@@ -236,6 +263,7 @@ class ChartBuilder:
         ax1.set_ylabel("", color="white")
         ax1.set_facecolor("#2b2b2b")
         ax1.tick_params(colors="white")
+        plt.setp(ax1.get_yticklabels(), fontsize=8)
 
         ax2 = fig.add_subplot(2, 2, 2)
         user_counts = df["user"].value_counts().head(10)
@@ -289,7 +317,7 @@ class ChartBuilder:
         ax4.set_facecolor("#2b2b2b")
         ax4.tick_params(colors="white")
 
-        fig.tight_layout(pad=2.5)
+        fig.tight_layout(pad=3.5, rect=[0, 0, 0.95, 1])
 
         canvas = FigureCanvasTkAgg(fig, master=parent_frame)
         canvas.draw()
@@ -300,18 +328,17 @@ class ChartBuilder:
 
         return fig
 
-
 class Exporter:
 
     @staticmethod
     def to_csv(df, filepath):
         cols = ["timestamp", "user", "ip", "action_ru", "status_ru", "folder", "filepath"]
         existing_cols = [c for c in cols if c in df.columns]
-        
+
         author = _get_author() if '_get_author' in globals() else "Nicolayka"
         with open(filepath, "w", encoding="utf-8-sig") as f:
             f.write(f"# Generated by Samba Audit Log Analyzer | Build: {author}\n")
-        
+
         df[existing_cols].to_csv(filepath, mode="a", index=False, encoding="utf-8-sig")
 
     @staticmethod
@@ -387,7 +414,6 @@ class Exporter:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html)
 
-
 class SambaAnalyzerApp(ctk.CTk):
 
     def __init__(self):
@@ -409,9 +435,9 @@ class SambaAnalyzerApp(ctk.CTk):
         self.fig = None
 
         self._build_ui()
-        
+
         self._flash_signature()
-        
+
         self.bind_all("<Control-Shift-A>", lambda e: self._show_about())
         self.bind_all("<Control-Shift-a>", lambda e: self._show_about())
 
@@ -631,7 +657,7 @@ class SambaAnalyzerApp(ctk.CTk):
                     ts = ts_val.strftime("%Y-%m-%d %H:%M:%S")
                 except:
                     ts = str(ts_val)
-            
+
             self.tree.insert(
                 "", "end",
                 values=(
@@ -683,8 +709,8 @@ class SambaAnalyzerApp(ctk.CTk):
             ("", "Всего событий", stats.get("total", 0), "#89b4fa"),
             ("✅", "Успешных операций", stats.get("success", 0), "#a6e3a1"),
             ("❌", "Ошибок", stats.get("errors", 0), "#f38ba8"),
-            ("📈", "Процент успеха", 
-             f"{(stats.get('success', 0) / max(stats.get('total', 1), 1) * 100):.1f}%", 
+            ("📈", "Процент успеха",
+             f"{(stats.get('success', 0) / max(stats.get('total', 1), 1) * 100):.1f}%",
              "#f9e2af"),
         ]
 
@@ -694,20 +720,20 @@ class SambaAnalyzerApp(ctk.CTk):
         for i, (icon, label, value, color) in enumerate(general_cards):
             card = ctk.CTkFrame(general_frame, corner_radius=16, fg_color="#313244", border_width=2, border_color=color)
             card.grid(row=0, column=i, padx=10, pady=10, sticky="nsew")
-            
+
             icon_label = ctk.CTkLabel(
                 card, text=icon,
                 font=("Segoe UI", 28),
             )
             icon_label.pack(pady=(15, 5))
-            
+
             val_label = ctk.CTkLabel(
                 card, text=str(value),
                 font=("Segoe UI", 26, "bold"),
                 text_color=color,
             )
             val_label.pack(pady=(0, 5))
-            
+
             lbl = ctk.CTkLabel(
                 card, text=label,
                 font=("Segoe UI", 11),
@@ -740,17 +766,17 @@ class SambaAnalyzerApp(ctk.CTk):
         for i, (icon, label, value, color) in enumerate(user_cards):
             card = ctk.CTkFrame(user_frame, corner_radius=16, fg_color="#313244", border_width=2, border_color=color)
             card.grid(row=0, column=i, padx=10, pady=10, sticky="nsew")
-            
+
             icon_label = ctk.CTkLabel(card, text=icon, font=("Segoe UI", 28))
             icon_label.pack(pady=(15, 5))
-            
+
             val_label = ctk.CTkLabel(
                 card, text=str(value),
                 font=("Segoe UI", 26, "bold"),
                 text_color=color,
             )
             val_label.pack(pady=(0, 5))
-            
+
             lbl = ctk.CTkLabel(
                 card, text=label,
                 font=("Segoe UI", 11),
@@ -782,10 +808,10 @@ class SambaAnalyzerApp(ctk.CTk):
         for i, (icon, label, value, color) in enumerate(time_cards):
             card = ctk.CTkFrame(time_frame, corner_radius=16, fg_color="#313244", border_width=2, border_color=color)
             card.grid(row=0, column=i, padx=10, pady=10, sticky="nsew")
-            
+
             icon_label = ctk.CTkLabel(card, text=icon, font=("Segoe UI", 28))
             icon_label.pack(pady=(15, 5))
-            
+
             val_label = ctk.CTkLabel(
                 card, text=str(value),
                 font=("Segoe UI", 20, "bold"),
@@ -793,7 +819,7 @@ class SambaAnalyzerApp(ctk.CTk):
                 wraplength=250,
             )
             val_label.pack(pady=(0, 5))
-            
+
             lbl = ctk.CTkLabel(
                 card, text=label,
                 font=("Segoe UI", 11),
@@ -814,63 +840,63 @@ class SambaAnalyzerApp(ctk.CTk):
         author = _get_author()
         about_text = (
             f"╔══════════════════════════════════════╗\n"
-            f"║  {APP_NAME} v{APP_VERSION}           ║\n"
+            f"║  {APP_NAME} v{APP_VERSION}          ║\n"
             f"║                                      ║\n"
-            f"║  Разработано: {author:<22}           ║\n"
-            f"║  © 2026 Все права защищены           ║\n"
+            f"║  Разработано: {author:<22}  ║\n"
+            f"║  © 2026 Все права защищены          ║\n"
             f"║                                      ║\n"
             f"╚══════════════════════════════════════╝"
         )
-        
+
         about_window = ctk.CTkToplevel(self)
         about_window.title("О программе")
         about_window.geometry("420x280")
         about_window.resizable(False, False)
         about_window.grab_set()
-        
+
         about_window.update_idletasks()
         x = (self.winfo_screenwidth() - 420) // 2
         y = (self.winfo_screenheight() - 280) // 2
         about_window.geometry(f"420x280+{x}+{y}")
-        
+
         frame = ctk.CTkFrame(about_window, fg_color="transparent")
         frame.pack(expand=True, fill="both", padx=20, pady=20)
-        
+
         title = ctk.CTkLabel(
             frame, text=f"🛡️ {APP_NAME}",
             font=("Segoe UI", 20, "bold"),
             text_color="#89b4fa",
         )
         title.pack(pady=(10, 5))
-        
+
         version = ctk.CTkLabel(
             frame, text=f"Версия {APP_VERSION}",
             font=("Segoe UI", 12),
             text_color="#a6adc8",
         )
         version.pack(pady=(0, 15))
-        
+
         author_label = ctk.CTkLabel(
             frame, text=f"Разработчик: {author}",
             font=("Segoe UI", 14, "bold"),
             text_color="#a6e3a1",
         )
         author_label.pack(pady=5)
-        
+
         copyright_lbl = ctk.CTkLabel(
             frame, text="© 2026 Все права защищены",
             font=("Segoe UI", 11),
             text_color="#6c7086",
         )
         copyright_lbl.pack(pady=5)
-        
+
         hint = ctk.CTkLabel(
             frame, text="(Нажмите Ctrl+Shift+A в любом месте программы)",
             font=("Segoe UI", 9),
             text_color="#45475a",
         )
         hint.pack(pady=(15, 5))
-        
+
         close_btn = ctk.CTkButton(
             frame, text="Закрыть", width=120,
             command=about_window.destroy,
@@ -965,7 +991,6 @@ class SambaAnalyzerApp(ctk.CTk):
                     webbrowser.open(filepath)
             except Exception as e:
                 messagebox.showerror("Ошибка", str(e))
-
 
 if __name__ == "__main__":
     app = SambaAnalyzerApp()
