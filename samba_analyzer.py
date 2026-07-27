@@ -96,9 +96,22 @@ class SambaParser:
 
     @classmethod
     def parse_file(cls, filepath, progress_callback=None):
+        """Парсит лог-файл и возвращает DataFrame."""
         rows = []
         total_lines = 0
         parsed_lines = 0
+
+        # Два паттерна для разных форматов дат
+        PATTERNS = [
+            # Формат: 2026-07-24 07:00:41 или 2026-07-24T07:00:41
+            re.compile(
+                r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*)\s+\S+\s+smbd_audit:\s+(?P<payload>.*)$"
+            ),
+            # Формат: Jul 24 07:00:41 (syslog без года)
+            re.compile(
+                r"^(?P<timestamp>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+\S+\s+smbd_audit:\s+(?P<payload>.*)$"
+            ),
+        ]
 
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             total_lines = sum(1 for _ in f)
@@ -109,43 +122,51 @@ class SambaParser:
                 if not line or "smbd_audit:" not in line:
                     continue
 
-                match = cls.LOG_PATTERN.search(line)
-                if match:
-                    d = match.groupdict()
-                    parts = d['payload'].split('|')
-
-                    if len(parts) == 7:
-                        user, ip, folder, action, status, access_flag, filepath = parts
-                    elif len(parts) == 6:
-                        user, ip, folder, action, status, filepath = parts
-                        access_flag = ""
-                    else:
-                        continue
-
-                    raw_action = action.strip().lower()
-                    flag = access_flag.strip().lower() if access_flag else ""
-
-                    if raw_action == 'open' and flag:
-                        if flag == 'r':
-                            action_ru = "📂 Открытие (Чтение)"
-                        elif flag == 'w':
-                            action_ru = "📂 Открытие (Запись)"
-                        elif flag == 'rw':
-                            action_ru = "📂 Открытие (Чтение/Запись)"
+                # Пробуем оба паттерна
+                matched = False
+                for pattern in PATTERNS:
+                    match = pattern.search(line)
+                    if match:
+                        d = match.groupdict()
+                        parts = d['payload'].split('|')
+                        
+                        if len(parts) == 7:
+                            user, ip, folder, action, status, access_flag, filepath_val = parts
+                        elif len(parts) == 6:
+                            user, ip, folder, action, status, filepath_val = parts
+                            access_flag = ""
                         else:
-                            action_ru = f"📂 Открытие (Флаг: {flag})"
-                    else:
-                        action_ru = cls.ACTION_TRANSLATIONS.get(raw_action, f"⚙️ {raw_action}")
+                            continue
 
-                    d['user'] = user.strip()
-                    d['ip'] = ip.strip()
-                    d['folder'] = folder.strip()
-                    d['action_ru'] = action_ru
-                    d['status_ru'] = "✅ Успешно" if status.strip().lower() in ("ok", "success") else "❌ Ошибка"
-                    d['filepath'] = filepath.strip()
+                        raw_action = action.strip().lower()
+                        flag = access_flag.strip().lower() if access_flag else ""
 
-                    rows.append(d)
-                    parsed_lines += 1
+                        if raw_action == 'open' and flag:
+                            if flag == 'r':
+                                action_ru = "📂 Открытие (Чтение)"
+                            elif flag == 'w':
+                                action_ru = "📂 Открытие (Запись)"
+                            elif flag == 'rw':
+                                action_ru = "📂 Открытие (Чтение/Запись)"
+                            else:
+                                action_ru = f" Открытие (Флаг: {flag})"
+                        else:
+                            action_ru = cls.ACTION_TRANSLATIONS.get(raw_action, f"⚙️ {raw_action}")
+
+                        d['user'] = user.strip()
+                        d['ip'] = ip.strip()
+                        d['folder'] = folder.strip()
+                        d['action_ru'] = action_ru
+                        d['status_ru'] = "✅ Успешно" if status.strip().lower() in ("ok", "success") else "❌ Ошибка"
+                        d['filepath'] = filepath_val.strip()
+                        
+                        rows.append(d)
+                        parsed_lines += 1
+                        matched = True
+                        break  # Выходим из цикла паттернов
+                
+                if not matched:
+                    continue  # Строка не подошла ни под один паттерн
 
                 if progress_callback and i % 500 == 0:
                     progress_callback(i / max(total_lines, 1))
